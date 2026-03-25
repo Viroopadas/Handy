@@ -730,6 +730,28 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: default_post_process_shortcut.to_string(),
         },
     );
+
+    #[cfg(target_os = "windows")]
+    let default_translate_selection_shortcut = "ctrl+alt+space";
+    #[cfg(target_os = "macos")]
+    let default_translate_selection_shortcut = "option+alt+space";
+    #[cfg(target_os = "linux")]
+    let default_translate_selection_shortcut = "ctrl+alt+space";
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let default_translate_selection_shortcut = "alt+ctrl+space";
+
+    bindings.insert(
+        "translate_selection".to_string(),
+        ShortcutBinding {
+            id: "translate_selection".to_string(),
+            name: "Translate Selection".to_string(),
+            description: "Translates the currently selected text using Google Translate."
+                .to_string(),
+            default_binding: default_translate_selection_shortcut.to_string(),
+            current_binding: default_translate_selection_shortcut.to_string(),
+        },
+    );
+
     bindings.insert(
         "cancel".to_string(),
         ShortcutBinding {

@@ -42,71 +42,71 @@ Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -
 
 ---
 
-## 2. Обработка выделенного текста (Ctrl+Shift+Space)
+## 2. Перевод выделенного текста (Ctrl+Alt+Space)
 
-Для шортката `transcribe_with_post_process` реализовано два режима:
-- **Текст выделен** → текст прогоняется через каскад (LLM Post-Processing → Translation) и вставляется заменяя выделение.
-- **Текст не выделен** → стандартная запись голоса (с последующим каскадом, как описано в разделе 1).
+Отдельный шорткат `translate_selection` — **one-shot action** (не toggle). Захватывает выделенный текст и переводит через настроенный сервис перевода. **Никогда не включает запись голоса.**
 
-*Примечание: Шорткат `transcribe` (Ctrl+Space) никогда не захватывает выделенный текст и всегда записывает голос.*
+### Пайплайн
+
+```
+Ctrl+Alt+Space → try_get_selected_text() → [LLM Post-Processing] → [Translation] → Paste
+```
+
+Если текст не выделен или перевод отключён — воспроизводится звук ошибки (SoundType::Stop), ничего не происходит.
 
 ### Принцип работы
 
-При нажатии Ctrl+Shift+Space, `TranscribeAction::start()`:
+При нажатии Ctrl+Alt+Space, `TranslateSelectionAction::start()`:
 
-1. Проверяет `self.post_process == true`.
-2. Проверяет, включен ли хотя бы один фильтр (`post_process_enabled` или `translation_enabled`).
-3. Если да — вызывает `try_get_selected_text()` (симулирует Ctrl+C, ждёт ответ через polling clipboard до 500ms).
-4. Если текст получен — делегирует в `start_process_selected_text()` (async LLM → async перевод → сохранение в историю → paste). Оверлеи меняются последовательно: сначала `processing`, затем `translating`. Если результат не отличается от исходного текста — paste пропускается (при ошибке воспроизводится звуковой сигнал).
-5. Если текста нет (или оба фильтра выключены) — запускается запись голоса. Если результат после пайплайна пуст — текст не вставляется, оверлеи просто скрываются.
+1. Проверяет `translation_enabled == true` и `translation_target_language` не пуст.
+2. Если перевод выключен — play_feedback_sound(Stop), return.
+3. Вызывает `try_get_selected_text(app)` (симулирует Ctrl+C, polling clipboard до 500ms).
+4. Если текст получен — делегирует в `start_process_selected_text(app, text)`.
+5. Если текста нет — play_feedback_sound(Stop).
+
+> **Важно:** `stop()` у `TranslateSelectionAction` — пустой. Шорткат не проходит через `TranscriptionCoordinator` (не записывает аудио), поэтому обрабатывается через ветку "remaining bindings" в `handler.rs`.
 
 ### Файлы
 
 | Файл | Что |
 |------|-----|
+| [actions.rs](file:///d:/dev/Handy/src-tauri/src/actions.rs) | `TranslateSelectionAction` + регистрация в `ACTION_MAP` |
+| [settings.rs](file:///d:/dev/Handy/src-tauri/src/settings.rs) | Дефолтный binding `translate_selection` (ctrl+alt+space) |
+| [TranslationSettings.tsx](file:///d:/dev/Handy/src/components/settings/TranslationSettings.tsx) | `ShortcutInput` для настройки комбинации |
 | `input.rs` | `send_copy_ctrl_c()` — симуляция Ctrl+C через enigo |
-| `clipboard.rs` | `try_get_selected_text()` — получение выделенного текста (polling clipboard каждые 50ms, до 500ms) |
-| `actions.rs` | `start_process_selected_text()` + ветвление в `TranscribeAction::start()` |
+| `clipboard.rs` | `try_get_selected_text()` — polling clipboard каждые 50ms, до 500ms |
 | `overlay.rs` | `show_translating_overlay()`, `show_processing_overlay()` — UI стейты |
 | `RecordingOverlay.tsx` | Рендер стейта "translating" и "processing" |
-| `translation.json` | Ключ `overlay.translating` |
 | `google_translate.rs` | Google Translate API (POST, form-encoded) |
 
-### Условия работы (для захвата текста)
+### Изменение: Ctrl+Shift+Space больше НЕ захватывает текст
 
-- Нажата комбинация с `post_process == true`.
-- Включен хотя бы один из фильтров: `post_process_enabled` или `translation_enabled`.
-- В буфере обмена оказался новый текст после симуляции `Ctrl+C` (определяется через polling, макс. 500ms).
+Ранее `TranscribeAction::start()` при `post_process == true` пытался получить выделенный текст. Теперь эта логика перенесена в `TranslateSelectionAction`. `Ctrl+Shift+Space` **всегда** записывает голос → транскрибирует → обрабатывает через LLM → переводит.
 
-Если условия не выполнены — запускается микрофон и запись голоса.
+---
 
-### Поведение после обработки
+## Итоговая архитектура шорткатов
 
-- Если результат **отличается** от исходного текста — вставляется через paste.
-- Если результат **совпадает** с исходным (ошибка API / оба фильтра ничего не изменили) — paste пропускается, при ошибке воспроизводится звуковой сигнал.
-- Результат **всегда сохраняется в историю** (`HistoryManager::save_entry`) — с пустым `file_name` (нет WAV).
+```
+Ctrl+Space              → TranscribeAction { post_process: false }
+                          → запись → Whisper → вставка (русский текст)
+
+Ctrl+Shift+Space        → TranscribeAction { post_process: true }
+                          → запись → Whisper → LLM постобработка → перевод → вставка
+
+Ctrl+Alt+Space          → TranslateSelectionAction
+                          → захват выделенного текста → каскад (LLM + перевод) → вставка
+                          → если текста нет — звук ошибки, запись НЕ включается
+```
 
 ---
 
 ## Известные ловушки и архитектурные нюансы
 
-### Алгоритм принятия решений (Ctrl+Shift+Space)
-
-```
-1. Если self.post_process == true:
-2.   has_pipeline = post_process_enabled || (translation_enabled && !target_language.is_empty())
-3.   Если has_pipeline == true:
-4.     Попытаться получить выделенный текст (try_get_selected_text, polling до 500ms)
-5.     Если текст получен → запустить каскадный пайплайн
-6.     Если текст НЕ получен → перейти к записи голоса
-7.   Если has_pipeline == false:
-8.     Сразу перейти к записи голоса (без попытки получить текст!)
-```
-
 ### Ctrl+C в терминале = SIGINT, а не копирование
 
 `try_get_selected_text()` симулирует нажатие `Ctrl+C` через `input.rs` → `send_copy_ctrl_c()` (enigo).
-В терминалах (cmd.exe, PowerShell) `Ctrl+C` интерпретируется как **прерывание процесса**, а не как копирование. Если при тестировании активное окно — терминал, clipboard останется пуст, и программа перейдёт к записи голоса вместо обработки текста.
+В терминалах (cmd.exe, PowerShell) `Ctrl+C` интерпретируется как **прерывание процесса**, а не как копирование. Если при тестировании активное окно — терминал, clipboard останется пуст, и программа воспроизведёт звук ошибки.
 
 ### Настройки перевода и optimistic UI
 

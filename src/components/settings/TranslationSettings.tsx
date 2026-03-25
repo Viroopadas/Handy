@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingContainer, SettingsGroup } from "../ui";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
+import { ShortcutInput } from "./ShortcutInput";
 import { useSettings } from "../../hooks/useSettings";
 import { LANGUAGES } from "../../lib/constants/languages";
 
@@ -208,6 +209,12 @@ export const TranslationSettings: React.FC = React.memo(() => {
             )}
           </div>
         </SettingContainer>
+
+          <ShortcutInput
+            shortcutId="translate_selection"
+            descriptionMode="tooltip"
+            grouped={true}
+          />
         </>
       )}
     </SettingsGroup>

@@ -568,28 +568,6 @@ impl ShortcutAction for TranscribeAction {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
 
-        if self.post_process {
-            let settings = get_settings(app);
-            let has_pipeline = settings.post_process_enabled
-                || (settings.translation_enabled
-                    && !settings.translation_target_language.is_empty());
-
-            if has_pipeline {
-                if let Some(selected_text) = crate::clipboard::try_get_selected_text(app) {
-                    debug!(
-                        "Selected text detected ({} chars), starting cascading pipeline",
-                        selected_text.len()
-                    );
-                    start_process_selected_text(app, selected_text);
-                    debug!(
-                        "TranscribeAction::start (pipeline branch) completed in {:?}",
-                        start_time.elapsed()
-                    );
-                    return;
-                }
-            }
-        }
-
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
         tm.initiate_model_load();
@@ -858,6 +836,39 @@ impl ShortcutAction for TranscribeAction {
     }
 }
 
+// Translate Selection Action (one-shot: захват выделенного текста → перевод → вставка)
+struct TranslateSelectionAction;
+
+impl ShortcutAction for TranslateSelectionAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        let settings = get_settings(app);
+
+        if !settings.translation_enabled || settings.translation_target_language.is_empty() {
+            debug!("TranslateSelectionAction: translation disabled or no target language");
+            play_feedback_sound(app, SoundType::Stop);
+            return;
+        }
+
+        match crate::clipboard::try_get_selected_text(app) {
+            Some(selected_text) => {
+                debug!(
+                    "TranslateSelectionAction: selected text ({} chars), starting pipeline",
+                    selected_text.len()
+                );
+                start_process_selected_text(app, selected_text);
+            }
+            None => {
+                debug!("TranslateSelectionAction: no selected text detected");
+                play_feedback_sound(app, SoundType::Stop);
+            }
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        // One-shot action
+    }
+}
+
 // Cancel Action
 struct CancelAction;
 
@@ -906,6 +917,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "transcribe_with_post_process".to_string(),
         Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "translate_selection".to_string(),
+        Arc::new(TranslateSelectionAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),
