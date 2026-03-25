@@ -86,30 +86,38 @@ Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -
 
 ## Инструкция по сборке (Windows)
 
-Для компиляции установочного файла (`.msi` / `.exe`) обязательна установка **Rust на хост-системе**. Создание изолированных окружений (Docker/WSL) для сборки Tauri под Windows не рекомендуется, так как требуется прямой доступ к Windows SDK и MSVC.
+Для компиляции установочного файла (`.msi` / `.exe`) обязательна установка **Rust на хост-системе**. Создание изолированных окружений (Docker/WSL) для сборки Tauri под Windows не рекомендуется (требуется прямой доступ к Windows SDK и MSVC).
 
-### Требования
-1. **Rust и C++ Build Tools**:
-   - Скачайте и запустите [rustup-init.exe](https://rustup.rs/)
-   - Установите Visual Studio C++ Build Tools (Rustup предложит это сделать автоматически)
-2. **Node.js**: установите свежую LTS версию
+### Шаг 1: Подготовка окружения (Зависимости)
+Приложению требуются современные C++ компиляторы (для ONNX Runtime и Whisper) и системные утилиты. Без них вы получите фатальные ошибки при линковке (например, `LNK2019: __std_min_element_d`).
 
-### Процесс сборки
-1. Установите `bun` (используется для сборки frontend-части):
+1. Установите [Chocolatey](https://chocolatey.org/install), затем выполните в PowerShell **от имени администратора**:
    ```powershell
-   npm install -g bun
+   choco install cmake llvm visualstudio2022-workload-vctools -y
    ```
-2. Установите зависимости:
-   ```powershell
-   npm install
-   ```
-   *(Если возникает ошибка с `check-nix-deps.ts`, используйте `npm install --ignore-scripts`)*
-3. Запустите сборку:
-   ```powershell
-   npx tauri build
-   ```
-   > [!WARNING]
-   > Важно: `npx tauri build` собирает бэкенд на Rust (включая C++ исходники whisper.cpp) в Release-режиме с максимальной оптимизацией и генерирует `.msi`/`.exe` инсталляторы (NSIS). Этот процесс **занимает от 5 до 15 минут** с высокой нагрузкой на CPU. Это не зависание — просто дождитесь завершения команды.
+   *(Это установит CMake, LLVM/Clang и новейший набор MSVC 2022 Build Tools)*
+2. Установите **Rust**: скачайте и запустите [rustup-init.exe](https://rustup.rs/) (обязательно перезагрузите терминал после установки).
+3. Установите свежую **Node.js LTS** (она нужна для пакетных менеджеров npm/bun).
+
+### Шаг 2: Установка Bun и зависимостей проекта
+```powershell
+npm install -g bun
+bun install
+```
+*(Если при `bun install` возникает ошибка с `check-nix-deps.ts`, используйте `bun install --ignore-scripts`)*
+
+### Шаг 3: Настройка подписи кода
+По умолчанию в `src-tauri/tauri.conf.json` включена онлайн-подпись `Azure Trusted Signing`. 
+Если у вас нет доступа к сертификату организации `cjpais-dev`, сборка **упадет в самом конце**.
+**Для локальной сборки — отключите ее**:
+Найдите блок `"windows": { "signCommand": ... }` в файле `tauri.conf.json` и **удалите или закомментируйте строку `signCommand`**.
+
+### Шаг 4: Запуск сборки
+```powershell
+bun run tauri build
+```
+> [!WARNING]
+> Важно: `bun run tauri build` собирает бэкенд на Rust (включая C++ исходники whisper.cpp) в Release-режиме с максимальной оптимизацией и генерирует `.msi`/`.exe` инсталляторы (NSIS). Этот процесс **занимает от 5 до 15 минут** с высокой нагрузкой на CPU. Это не зависание — просто дождитесь завершения команды.
 
 4. Установочные файлы появятся в:
    - `src-tauri/target/release/bundle/msi/`
