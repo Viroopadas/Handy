@@ -30,9 +30,22 @@ pub fn try_get_selected_text(app_handle: &AppHandle) -> Option<String> {
         return None;
     }
 
-    std::thread::sleep(Duration::from_millis(150));
+    // Polling: проверяем clipboard каждые 50ms, максимум 500ms.
+    // Быстрые приложения (Notepad, браузер) отвечают за <50ms.
+    // Медленные (Electron, IDE) могут занимать 200-400ms.
+    const POLL_INTERVAL_MS: u64 = 50;
+    const MAX_WAIT_MS: u64 = 500;
+    let mut waited_ms: u64 = 0;
+    let mut copied_text = String::new();
 
-    let copied_text = clipboard.read_text().unwrap_or_default();
+    while waited_ms < MAX_WAIT_MS {
+        std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+        waited_ms += POLL_INTERVAL_MS;
+        copied_text = clipboard.read_text().unwrap_or_default();
+        if !copied_text.trim().is_empty() {
+            break;
+        }
+    }
 
     let _ = clipboard.write_text(&original_content);
 

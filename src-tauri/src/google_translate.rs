@@ -13,7 +13,7 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String> {
     ];
 
     let client = Client::new();
-    let res = client.get(url).query(&params).send().await?;
+    let res = client.post(url).form(&params).send().await?;
 
     if !res.status().is_success() {
         return Err(anyhow!(

@@ -1062,6 +1062,41 @@ pub fn change_lazy_stream_close_setting(app: AppHandle, enabled: bool) -> Result
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_translation_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.translation_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_translation_service_setting(app: AppHandle, service: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    let parsed = match service.as_str() {
+        "llm" => settings::TranslationService::Llm,
+        "google" => settings::TranslationService::Google,
+        other => {
+            log::warn!("Invalid translation service '{}', defaulting to google", other);
+            settings::TranslationService::Google
+        }
+    };
+    settings.translation_service = parsed;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_translation_target_language_setting(app: AppHandle, language: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.translation_target_language = language;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_app_language_setting(app: AppHandle, language: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.app_language = language.clone();

@@ -141,6 +141,12 @@ const settingUpdaters: {
     commands.changeExperimentalEnabledSetting(value as boolean),
   lazy_stream_close: (value) =>
     commands.changeLazyStreamCloseSetting(value as boolean),
+  translation_enabled: (value) =>
+    commands.changeTranslationEnabledSetting(value as boolean),
+  translation_service: (value) =>
+    commands.changeTranslationServiceSetting(value as string),
+  translation_target_language: (value) =>
+    commands.changeTranslationTargetLanguageSetting(value as string),
   show_tray_icon: (value) =>
     commands.changeShowTrayIconSetting(value as boolean),
   whisper_accelerator: (value) =>

@@ -476,19 +476,64 @@ fn start_process_selected_text(app: &AppHandle, selected_text: String) {
     tauri::async_runtime::spawn(async move {
         let _guard = FinishGuard(ah.clone());
         let settings = get_settings(&ah);
-        let mut result = selected_text;
+        let mut result = selected_text.clone();
+        let mut post_processed_text: Option<String> = None;
+        let mut translated_text: Option<String> = None;
+        let mut translation_target_language: Option<String> = None;
+        let mut had_error = false;
 
         if settings.post_process_enabled {
-            if let Some(processed) = post_process_transcription(&settings, &result).await {
-                result = processed;
+            match post_process_transcription(&settings, &result).await {
+                Some(processed) => {
+                    post_processed_text = Some(processed.clone());
+                    result = processed;
+                }
+                None if settings.post_process_enabled => {
+                    // LLM была включена, но вернула None — вероятна ошибка
+                    had_error = true;
+                }
+                _ => {}
             }
         }
 
         if settings.translation_enabled && !settings.translation_target_language.is_empty() {
             show_translating_overlay(&ah);
-            if let Some(translated) = translate_transcription(&settings, &result).await {
-                result = translated;
+            match translate_transcription(&settings, &result).await {
+                Some(translation) => {
+                    translated_text = Some(translation.clone());
+                    translation_target_language =
+                        Some(settings.translation_target_language.clone());
+                    result = translation;
+                }
+                None => {
+                    had_error = true;
+                }
             }
+        }
+
+        // Сохраняем в историю (без WAV файла — это операция над текстом)
+        let hm = Arc::clone(&ah.state::<Arc<HistoryManager>>());
+        if let Err(err) = hm.save_entry(
+            String::new(), // нет аудиофайла
+            selected_text.clone(),
+            settings.post_process_enabled,
+            post_processed_text,
+            None,
+            translated_text,
+            translation_target_language,
+        ) {
+            error!("Failed to save selected text history entry: {}", err);
+        }
+
+        // Фикс 4.1: не вставляем текст обратно, если он не изменился
+        if result == selected_text {
+            if had_error {
+                play_feedback_sound(&ah, SoundType::Stop);
+            }
+            warn!("Pipeline returned unchanged text for selected text, skipping paste");
+            utils::hide_recording_overlay(&ah);
+            change_tray_icon(&ah, TrayIconState::Idle);
+            return;
         }
 
         if !result.is_empty() {
