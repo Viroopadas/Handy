@@ -4,17 +4,19 @@
 
 ---
 
-## 1. Перевод транскрипции (Post-Processing)
+## 1. Перевод транскрипции (Каскад)
 
-Автоматический перевод транскрибированного текста через LLM после пост-обработки.
+Автоматический перевод транскрибированного текста через LLM после пост-обработки. 
+**Внимание:** Выполняется **только** при использовании шортката `transcribe_with_post_process` (по умолчанию `Ctrl+Shift+Space`). 
+Обычный шорткат `transcribe` (`Ctrl+Space`) всегда вставляет исходную транскрипцию без LLM и перевода.
 
-### Пайплайн
+### Пайплайн при записи голоса
 
 ```
 Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -> Paste
 ```
 
-Вставляется **только перевод**, оригинал сохраняется в историю.
+Вставляется **только финал (перевод)**, оригинальная транскрипция сохраняется в историю.
 
 ### Настройки
 
@@ -40,39 +42,42 @@ Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -
 
 ---
 
-## 2. Перевод выделенного текста (Ctrl+Space)
+## 2. Обработка выделенного текста (Ctrl+Shift+Space)
 
-Один шорткат — два режима:
-- **Текст выделен** → перевод на `translation_target_language`
-- **Текст не выделен** → запись голоса (стандартное поведение)
+Для шортката `transcribe_with_post_process` реализовано два режима:
+- **Текст выделен** → текст прогоняется через каскад (LLM Post-Processing → Translation) и вставляется заменяя выделение.
+- **Текст не выделен** → стандартная запись голоса (с последующим каскадом, как описано в разделе 1).
+
+*Примечание: Шорткат `transcribe` (Ctrl+Space) никогда не захватывает выделенный текст и всегда записывает голос.*
 
 ### Принцип работы
 
-При нажатии Ctrl+Space, `TranscribeAction::start()`:
+При нажатии Ctrl+Shift+Space, `TranscribeAction::start()`:
 
-1. Проверяет `translation_enabled && !translation_target_language.is_empty()`
-2. Если да — вызывает `try_get_selected_text()` (симулирует Ctrl+C, читает clipboard)
-3. Если текст получен — делегирует в `start_translate_selected_text()` (async перевод → paste)
-4. Если нет — обычная запись голоса
+1. Проверяет `self.post_process == true`.
+2. Проверяет, включен ли хотя бы один фильтр (`post_process_enabled` или `translation_enabled`).
+3. Если да — вызывает `try_get_selected_text()` (симулирует Ctrl+C, читает clipboard).
+4. Если текст получен — делегирует в `start_process_selected_text()` (async LLM → async перевод → paste). Оверлеи меняются последовательно: сначала `processing`, затем `translating`.
+5. Если текста нет (или оба фильтра выключены) — запускается запись голоса. Если результат после пайплайна пуст — текст не вставляется, оверлеи просто скрываются.
 
 ### Файлы
 
 | Файл | Что |
 |------|-----|
-| [input.rs](file:///d:/dev/Handy/src-tauri/src/input.rs) | `send_copy_ctrl_c()` — симуляция Ctrl+C через enigo |
-| [clipboard.rs](file:///d:/dev/Handy/src-tauri/src/clipboard.rs) | `try_get_selected_text()` — получение выделенного текста через clipboard |
-| [actions.rs](file:///d:/dev/Handy/src-tauri/src/actions.rs) | `start_translate_selected_text()` + ветвление в `TranscribeAction::start()` |
-| [overlay.rs](file:///d:/dev/Handy/src-tauri/src/overlay.rs) | `show_translating_overlay()` — overlay-стейт "translating" |
-| [RecordingOverlay.tsx](file:///d:/dev/Handy/src/overlay/RecordingOverlay.tsx) | Рендер стейта "translating" |
-| [translation.json](file:///d:/dev/Handy/src/i18n/locales/en/translation.json) | Ключ `overlay.translating` |
+| `input.rs` | `send_copy_ctrl_c()` — симуляция Ctrl+C через enigo |
+| `clipboard.rs` | `try_get_selected_text()` — получение выделенного текста через clipboard |
+| `actions.rs` | `start_process_selected_text()` + ветвление в `TranscribeAction::start()` |
+| `overlay.rs` | `show_translating_overlay()`, `show_processing_overlay()` — UI стейты |
+| `RecordingOverlay.tsx` | Рендер стейта "translating" и "processing" |
+| `translation.json` | Ключ `overlay.translating` |
 
-### Условия работы
+### Условия работы (для захвата текста)
 
-- `translation_enabled = true`
-- `translation_target_language` не пуст
-- Настроен LLM-провайдер (post-processing)
+- Нажата комбинация с `post_process == true`.
+- Включен хотя бы один из фильтров: `post_process_enabled` или `translation_enabled`.
+- В буфере обмена оказался новый текст после симуляции `Ctrl+C`.
 
-Если условия не выполнены — Ctrl+Space всегда записывает голос.
+Если условия не выполнены — запускается микрофон и запись голоса.
 
 ---
 
@@ -112,16 +117,15 @@ bun install
 **Для локальной сборки — отключите ее**:
 Найдите блок `"windows": { "signCommand": ... }` в файле `tauri.conf.json` и **удалите или закомментируйте строку `signCommand`**.
 
-### Шаг 4: Запуск сборки
+### Шаг 4: Запуск сборки (легкая установка)
 ```powershell
-bun run tauri build
+bun run tauri build --bundles msi
 ```
 > [!WARNING]
-> Важно: `bun run tauri build` собирает бэкенд на Rust (включая C++ исходники whisper.cpp) в Release-режиме с максимальной оптимизацией и генерирует `.msi`/`.exe` инсталляторы (NSIS). Этот процесс **занимает от 5 до 15 минут** с высокой нагрузкой на CPU. Это не зависание — просто дождитесь завершения команды.
+> Важно: `bun run tauri build --bundles msi` собирает бэкенд на Rust (включая C++ исходники whisper.cpp) в Release-режиме с максимальной оптимизацией и генерирует **только** `.msi` установщик (пропуская долгую сборку .exe/NSIS инсталлятора). Этот процесс **занимает от 5 до 15 минут** с высокой нагрузкой на CPU. Это не зависание — просто дождитесь завершения команды.
 
-4. Установочные файлы появятся в:
+4. Установочный файл `.msi` появится в:
    - `src-tauri/target/release/bundle/msi/`
-   - `src-tauri/target/release/bundle/nsis/`
 
 ---
 

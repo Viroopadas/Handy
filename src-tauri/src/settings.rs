@@ -273,6 +273,14 @@ impl Default for TypingTool {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TranslationService {
+    #[default]
+    Google,
+    Llm,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum WhisperAcceleratorSetting {
@@ -401,6 +409,8 @@ pub struct AppSettings {
     pub extra_recording_buffer_ms: u64,
     #[serde(default = "default_translation_enabled")]
     pub translation_enabled: bool,
+    #[serde(default)]
+    pub translation_service: TranslationService,
     #[serde(default = "default_translation_target_language")]
     pub translation_target_language: String,
 }
@@ -781,6 +791,7 @@ pub fn get_default_settings() -> AppSettings {
         ort_accelerator: OrtAcceleratorSetting::default(),
         extra_recording_buffer_ms: 0,
         translation_enabled: default_translation_enabled(),
+        translation_service: TranslationService::default(),
         translation_target_language: default_translation_target_language(),
     }
 }

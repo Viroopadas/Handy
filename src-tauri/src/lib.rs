@@ -6,6 +6,7 @@ pub mod audio_toolkit;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod google_translate;
 mod helpers;
 mod input;
 mod llm_client;

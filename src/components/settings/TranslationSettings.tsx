@@ -18,6 +18,7 @@ export const TranslationSettings: React.FC = React.memo(() => {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const translationEnabled = getSetting("translation_enabled") || false;
+  const translationService = getSetting("translation_service") || "google";
   const targetLanguage = getSetting("translation_target_language") || "en";
 
   useEffect(() => {
@@ -82,7 +83,44 @@ export const TranslationSettings: React.FC = React.memo(() => {
       />
 
       {translationEnabled && (
-        <SettingContainer
+        <>
+          <SettingContainer 
+            title="Translation Engine" 
+            description="Choose the service to translate the transcribed text."
+            descriptionMode="tooltip"
+            grouped={true}
+          >
+            <div className="flex flex-col gap-3 py-2 px-2">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="translation_service"
+                  value="google"
+                  checked={translationService === "google"}
+                  onChange={() => updateSetting("translation_service", "google")}
+                  disabled={isUpdating("translation_service")}
+                  className="w-4 h-4 text-logo-primary focus:ring-logo-primary border-mid-gray bg-background cursor-pointer"
+                />
+                <span className="text-sm">Google Translate (Free)</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="translation_service"
+                  value="llm"
+                  checked={translationService === "llm"}
+                  onChange={() => updateSetting("translation_service", "llm")}
+                  disabled={isUpdating("translation_service")}
+                  className="w-4 h-4 text-logo-primary focus:ring-logo-primary border-mid-gray bg-background cursor-pointer"
+                />
+                <div className="flex flex-col">
+                  <span className="text-sm">LLM Post-Processing</span>
+                  <span className="text-xs text-mid-gray mt-0.5">Requires API Key or Local Model configured in Post-Processing</span>
+                </div>
+              </label>
+            </div>
+          </SettingContainer>
+          <SettingContainer
           title={t(
             "settings.postProcessing.translation.targetLanguage.title",
           )}
@@ -170,6 +208,7 @@ export const TranslationSettings: React.FC = React.memo(() => {
             )}
           </div>
         </SettingContainer>
+        </>
       )}
     </SettingsGroup>
   );

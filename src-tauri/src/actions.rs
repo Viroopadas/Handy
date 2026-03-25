@@ -273,6 +273,19 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
 }
 
 async fn translate_transcription(settings: &AppSettings, text: &str) -> Option<String> {
+    if settings.translation_service == crate::settings::TranslationService::Google {
+        match crate::google_translate::translate(text, &settings.translation_target_language).await {
+            Ok(translated) => {
+                log::debug!("Google Translate succeeded. Output length: {}", translated.len());
+                return Some(translated);
+            }
+            Err(e) => {
+                log::error!("Google Translate failed: {}. Falling back to original text.", e);
+                return None;
+            }
+        }
+    }
+
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
         None => {
@@ -435,7 +448,10 @@ pub(crate) async fn process_transcription_output(
     let mut translated_text: Option<String> = None;
     let mut translation_target_language: Option<String> = None;
 
-    if settings.translation_enabled && !settings.translation_target_language.is_empty() {
+    if post_process
+        && settings.translation_enabled
+        && !settings.translation_target_language.is_empty()
+    {
         if let Some(translation) = translate_transcription(&settings, &final_text).await {
             translated_text = Some(translation.clone());
             translation_target_language = Some(settings.translation_target_language.clone());
@@ -452,41 +468,52 @@ pub(crate) async fn process_transcription_output(
     }
 }
 
-fn start_translate_selected_text(app: &AppHandle, selected_text: String) {
+fn start_process_selected_text(app: &AppHandle, selected_text: String) {
     let ah = app.clone();
     change_tray_icon(app, TrayIconState::Transcribing);
-    utils::show_translating_overlay(app);
+    show_processing_overlay(app);
 
     tauri::async_runtime::spawn(async move {
         let _guard = FinishGuard(ah.clone());
         let settings = get_settings(&ah);
+        let mut result = selected_text;
 
-        match translate_transcription(&settings, &selected_text).await {
-            Some(translated) if !translated.is_empty() => {
-                let ah_clone = ah.clone();
-                let paste_time = Instant::now();
-                ah.run_on_main_thread(move || {
-                    match utils::paste(translated, ah_clone.clone()) {
-                        Ok(()) => debug!(
-                            "Translation pasted successfully in {:?}",
-                            paste_time.elapsed()
-                        ),
-                        Err(e) => error!("Failed to paste translation: {}", e),
-                    }
-                    utils::hide_recording_overlay(&ah_clone);
-                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                })
-                .unwrap_or_else(|e| {
-                    error!("Failed to run paste on main thread: {:?}", e);
-                    utils::hide_recording_overlay(&ah);
-                    change_tray_icon(&ah, TrayIconState::Idle);
-                });
+        if settings.post_process_enabled {
+            if let Some(processed) = post_process_transcription(&settings, &result).await {
+                result = processed;
             }
-            _ => {
-                error!("Translation returned empty result or failed");
+        }
+
+        if settings.translation_enabled && !settings.translation_target_language.is_empty() {
+            show_translating_overlay(&ah);
+            if let Some(translated) = translate_transcription(&settings, &result).await {
+                result = translated;
+            }
+        }
+
+        if !result.is_empty() {
+            let ah_clone = ah.clone();
+            let paste_time = Instant::now();
+            ah.run_on_main_thread(move || {
+                match utils::paste(result, ah_clone.clone()) {
+                    Ok(()) => debug!(
+                        "Processed text pasted in {:?}",
+                        paste_time.elapsed()
+                    ),
+                    Err(e) => error!("Failed to paste processed text: {}", e),
+                }
+                utils::hide_recording_overlay(&ah_clone);
+                change_tray_icon(&ah_clone, TrayIconState::Idle);
+            })
+            .unwrap_or_else(|e| {
+                error!("Failed to run paste on main thread: {:?}", e);
                 utils::hide_recording_overlay(&ah);
                 change_tray_icon(&ah, TrayIconState::Idle);
-            }
+            });
+        } else {
+            warn!("Pipeline returned empty result for selected text");
+            utils::hide_recording_overlay(&ah);
+            change_tray_icon(&ah, TrayIconState::Idle);
         }
     });
 }
@@ -496,19 +523,25 @@ impl ShortcutAction for TranscribeAction {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
 
-        let settings = get_settings(app);
-        if settings.translation_enabled && !settings.translation_target_language.is_empty() {
-            if let Some(selected_text) = crate::clipboard::try_get_selected_text(app) {
-                debug!(
-                    "Selected text detected ({} chars), starting translation instead of recording",
-                    selected_text.len()
-                );
-                start_translate_selected_text(app, selected_text);
-                debug!(
-                    "TranscribeAction::start (translation branch) completed in {:?}",
-                    start_time.elapsed()
-                );
-                return;
+        if self.post_process {
+            let settings = get_settings(app);
+            let has_pipeline = settings.post_process_enabled
+                || (settings.translation_enabled
+                    && !settings.translation_target_language.is_empty());
+
+            if has_pipeline {
+                if let Some(selected_text) = crate::clipboard::try_get_selected_text(app) {
+                    debug!(
+                        "Selected text detected ({} chars), starting cascading pipeline",
+                        selected_text.len()
+                    );
+                    start_process_selected_text(app, selected_text);
+                    debug!(
+                        "TranscribeAction::start (pipeline branch) completed in {:?}",
+                        start_time.elapsed()
+                    );
+                    return;
+                }
             }
         }
 
@@ -607,11 +640,16 @@ impl ShortcutAction for TranscribeAction {
         // Unregister the cancel shortcut when transcription stops
         shortcut::unregister_cancel_shortcut(app);
 
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        if !rm.is_recording() {
+            log::debug!("TranscribeAction::stop ignored because no audio recording is active.");
+            return;
+        }
+
         let stop_time = Instant::now();
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
 
         let ah = app.clone();
-        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
