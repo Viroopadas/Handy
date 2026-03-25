@@ -88,6 +88,39 @@ Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -
 
 ---
 
+## Известные ловушки и архитектурные нюансы
+
+### Алгоритм принятия решений (Ctrl+Shift+Space)
+
+```
+1. Если self.post_process == true:
+2.   has_pipeline = post_process_enabled || (translation_enabled && !target_language.is_empty())
+3.   Если has_pipeline == true:
+4.     Попытаться получить выделенный текст (try_get_selected_text, polling до 500ms)
+5.     Если текст получен → запустить каскадный пайплайн
+6.     Если текст НЕ получен → перейти к записи голоса
+7.   Если has_pipeline == false:
+8.     Сразу перейти к записи голоса (без попытки получить текст!)
+```
+
+### Ctrl+C в терминале = SIGINT, а не копирование
+
+`try_get_selected_text()` симулирует нажатие `Ctrl+C` через `input.rs` → `send_copy_ctrl_c()` (enigo).
+В терминалах (cmd.exe, PowerShell) `Ctrl+C` интерпретируется как **прерывание процесса**, а не как копирование. Если при тестировании активное окно — терминал, clipboard останется пуст, и программа перейдёт к записи голоса вместо обработки текста.
+
+### Настройки перевода и optimistic UI
+
+Настройки `translation_enabled`, `translation_service`, `translation_target_language` персистятся через Tauri-команды:
+- `change_translation_enabled_setting`
+- `change_translation_service_setting`
+- `change_translation_target_language_setting`
+
+Они зарегистрированы в `collect_commands!` ([lib.rs:365-367](file:///d:/dev/Handy/src-tauri/src/lib.rs#L365-L367)) и привязаны к фронтенду через `settingUpdaters` в [settingsStore.ts](file:///d:/dev/Handy/src/stores/settingsStore.ts).
+
+> **Важно:** Если добавляются новые настройки — обязательно реализовать Tauri-команду для сохранения, иначе optimistic UI будет показывать включённое состояние, но при рефреше стейта с бэкенда всё сбросится к дефолтам.
+
+---
+
 ## Что не реализовано
 
 - i18n для других языков (кроме EN) — ключи `settings.postProcessing.translation.*` и `overlay.translating`
