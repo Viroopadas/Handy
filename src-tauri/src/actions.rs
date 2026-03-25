@@ -10,6 +10,7 @@ use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils::{
     self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay,
+    show_translating_overlay,
 };
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
@@ -271,6 +272,81 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     }
 }
 
+async fn translate_transcription(settings: &AppSettings, text: &str) -> Option<String> {
+    let provider = match settings.active_post_process_provider().cloned() {
+        Some(provider) => provider,
+        None => {
+            debug!("Translation enabled but no provider is selected");
+            return None;
+        }
+    };
+
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+
+    if model.trim().is_empty() {
+        debug!(
+            "Translation skipped because provider '{}' has no model configured",
+            provider.id
+        );
+        return None;
+    }
+
+    let api_key = settings
+        .post_process_api_keys
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+
+    let target_language = &settings.translation_target_language;
+
+    debug!(
+        "Starting translation to '{}' with provider '{}' (model: {})",
+        target_language, provider.id, model
+    );
+
+    let system_prompt = format!(
+        "Translate the following text to {}. Return only the translation, nothing else. \
+         Preserve the original formatting, punctuation and paragraph structure.",
+        target_language
+    );
+
+    match crate::llm_client::send_chat_completion_with_schema(
+        &provider,
+        api_key,
+        &model,
+        text.to_string(),
+        Some(system_prompt),
+        None,
+    )
+    .await
+    {
+        Ok(Some(content)) => {
+            let content = strip_invisible_chars(&content);
+            debug!(
+                "Translation succeeded for provider '{}'. Output length: {} chars",
+                provider.id,
+                content.len()
+            );
+            Some(content)
+        }
+        Ok(None) => {
+            error!("Translation API response has no content");
+            None
+        }
+        Err(e) => {
+            error!(
+                "Translation failed for provider '{}': {}. Using original text.",
+                provider.id, e
+            );
+            None
+        }
+    }
+}
+
 async fn maybe_convert_chinese_variant(
     settings: &AppSettings,
     transcription: &str,
@@ -319,6 +395,8 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    pub translated_text: Option<String>,
+    pub translation_target_language: Option<String>,
 }
 
 pub(crate) async fn process_transcription_output(
@@ -354,17 +432,85 @@ pub(crate) async fn process_transcription_output(
         post_processed_text = Some(final_text.clone());
     }
 
+    let mut translated_text: Option<String> = None;
+    let mut translation_target_language: Option<String> = None;
+
+    if settings.translation_enabled && !settings.translation_target_language.is_empty() {
+        if let Some(translation) = translate_transcription(&settings, &final_text).await {
+            translated_text = Some(translation.clone());
+            translation_target_language = Some(settings.translation_target_language.clone());
+            final_text = translation;
+        }
+    }
+
     ProcessedTranscription {
         final_text,
         post_processed_text,
         post_process_prompt,
+        translated_text,
+        translation_target_language,
     }
+}
+
+fn start_translate_selected_text(app: &AppHandle, selected_text: String) {
+    let ah = app.clone();
+    change_tray_icon(app, TrayIconState::Transcribing);
+    utils::show_translating_overlay(app);
+
+    tauri::async_runtime::spawn(async move {
+        let _guard = FinishGuard(ah.clone());
+        let settings = get_settings(&ah);
+
+        match translate_transcription(&settings, &selected_text).await {
+            Some(translated) if !translated.is_empty() => {
+                let ah_clone = ah.clone();
+                let paste_time = Instant::now();
+                ah.run_on_main_thread(move || {
+                    match utils::paste(translated, ah_clone.clone()) {
+                        Ok(()) => debug!(
+                            "Translation pasted successfully in {:?}",
+                            paste_time.elapsed()
+                        ),
+                        Err(e) => error!("Failed to paste translation: {}", e),
+                    }
+                    utils::hide_recording_overlay(&ah_clone);
+                    change_tray_icon(&ah_clone, TrayIconState::Idle);
+                })
+                .unwrap_or_else(|e| {
+                    error!("Failed to run paste on main thread: {:?}", e);
+                    utils::hide_recording_overlay(&ah);
+                    change_tray_icon(&ah, TrayIconState::Idle);
+                });
+            }
+            _ => {
+                error!("Translation returned empty result or failed");
+                utils::hide_recording_overlay(&ah);
+                change_tray_icon(&ah, TrayIconState::Idle);
+            }
+        }
+    });
 }
 
 impl ShortcutAction for TranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         let start_time = Instant::now();
         debug!("TranscribeAction::start called for binding: {}", binding_id);
+
+        let settings = get_settings(app);
+        if settings.translation_enabled && !settings.translation_target_language.is_empty() {
+            if let Some(selected_text) = crate::clipboard::try_get_selected_text(app) {
+                debug!(
+                    "Selected text detected ({} chars), starting translation instead of recording",
+                    selected_text.len()
+                );
+                start_translate_selected_text(app, selected_text);
+                debug!(
+                    "TranscribeAction::start (translation branch) completed in {:?}",
+                    start_time.elapsed()
+                );
+                return;
+            }
+        }
 
         // Load model in the background
         let tm = app.state::<Arc<TranscriptionManager>>();
@@ -562,6 +708,8 @@ impl ShortcutAction for TranscribeAction {
                                     post_process,
                                     processed.post_processed_text.clone(),
                                     processed.post_process_prompt.clone(),
+                                    processed.translated_text.clone(),
+                                    processed.translation_target_language.clone(),
                                 ) {
                                     error!("Failed to save history entry: {}", err);
                                 }
@@ -600,6 +748,8 @@ impl ShortcutAction for TranscribeAction {
                                     file_name,
                                     String::new(),
                                     post_process,
+                                    None,
+                                    None,
                                     None,
                                     None,
                                 ) {

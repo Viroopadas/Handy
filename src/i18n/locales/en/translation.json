@@ -407,6 +407,19 @@
         "cancel": "Cancel",
         "selectToEdit": "Select a prompt above to view and edit its details.",
         "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
+      },
+      "translation": {
+        "title": "Translation",
+        "toggle": {
+          "label": "Translate Output",
+          "description": "Translate the transcription to a different language using your configured AI provider."
+        },
+        "targetLanguage": {
+          "title": "Target Language",
+          "description": "Select the language to translate the transcription into.",
+          "searchPlaceholder": "Search languages...",
+          "noResults": "No languages found"
+        }
       }
     },
     "history": {
@@ -593,6 +606,7 @@
   },
   "overlay": {
     "transcribing": "Transcribing...",
-    "processing": "Processing..."
+    "processing": "Processing...",
+    "translating": "Translating..."
   }
 }

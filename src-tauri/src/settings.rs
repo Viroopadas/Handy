@@ -399,6 +399,10 @@ pub struct AppSettings {
     pub ort_accelerator: OrtAcceleratorSetting,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
+    #[serde(default = "default_translation_enabled")]
+    pub translation_enabled: bool,
+    #[serde(default = "default_translation_target_language")]
+    pub translation_target_language: String,
 }
 
 fn default_model() -> String {
@@ -609,6 +613,14 @@ fn default_typing_tool() -> TypingTool {
     TypingTool::Auto
 }
 
+fn default_translation_enabled() -> bool {
+    false
+}
+
+fn default_translation_target_language() -> String {
+    "en".to_string()
+}
+
 fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     let mut changed = false;
     for provider in default_post_process_providers() {
@@ -768,6 +780,8 @@ pub fn get_default_settings() -> AppSettings {
         whisper_accelerator: WhisperAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         extra_recording_buffer_ms: 0,
+        translation_enabled: default_translation_enabled(),
+        translation_target_language: default_translation_target_language(),
     }
 }
 

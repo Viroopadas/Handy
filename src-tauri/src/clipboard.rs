@@ -9,6 +9,40 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+/// Пробует получить выделенный текст через Ctrl+C → чтение clipboard.
+/// Возвращает `Some(text)` если текст был выделен, `None` если нет.
+/// Восстанавливает оригинальное содержимое clipboard.
+pub fn try_get_selected_text(app_handle: &AppHandle) -> Option<String> {
+    let enigo_state = app_handle.try_state::<EnigoState>()?;
+    let mut enigo = enigo_state.0.lock().ok()?;
+
+    let clipboard = app_handle.clipboard();
+    let original_content = clipboard.read_text().unwrap_or_default();
+
+    // Очищаем clipboard перед копированием, чтобы отличить
+    // «ничего не выделено» от «выделенный текст совпадает с clipboard»
+    let _ = clipboard.write_text("");
+    std::thread::sleep(Duration::from_millis(20));
+
+    if let Err(e) = input::send_copy_ctrl_c(&mut enigo) {
+        info!("Failed to send Ctrl+C: {}", e);
+        let _ = clipboard.write_text(&original_content);
+        return None;
+    }
+
+    std::thread::sleep(Duration::from_millis(150));
+
+    let copied_text = clipboard.read_text().unwrap_or_default();
+
+    let _ = clipboard.write_text(&original_content);
+
+    if copied_text.trim().is_empty() {
+        None
+    } else {
+        Some(copied_text)
+    }
+}
+
 #[cfg(target_os = "linux")]
 use crate::utils::{is_kde_wayland, is_wayland};
 
