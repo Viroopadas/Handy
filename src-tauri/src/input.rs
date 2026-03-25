@@ -136,6 +136,25 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
     Ok(())
 }
 
+/// Отпускает все модификаторы (Ctrl, Alt, Shift, Meta/Win),
+/// чтобы последующая симуляция клавиш не «портилась» физически зажатыми клавишами.
+/// Критично для шортката translate_selection (Ctrl+Alt+Space):
+/// без этого enigo посылает Ctrl+Alt+C вместо Ctrl+C.
+pub fn release_all_modifiers(enigo: &mut Enigo) -> Result<(), String> {
+    for (label, key) in [
+        ("Ctrl",  Key::Control),
+        ("Alt",   Key::Alt),
+        ("Shift", Key::Shift),
+        ("Meta",  Key::Meta),
+    ] {
+        enigo
+            .key(key, enigo::Direction::Release)
+            .map_err(|e| format!("Failed to release {} key: {}", label, e))?;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    Ok(())
+}
+
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {

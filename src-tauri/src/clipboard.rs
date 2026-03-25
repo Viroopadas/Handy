@@ -24,6 +24,12 @@ pub fn try_get_selected_text(app_handle: &AppHandle) -> Option<String> {
     let _ = clipboard.write_text("");
     std::thread::sleep(Duration::from_millis(20));
 
+    // Отпускаем все модификаторы перед симуляцией Ctrl+C,
+    // иначе физически зажатые Ctrl/Alt/Shift портят результат
+    if let Err(e) = input::release_all_modifiers(&mut enigo) {
+        info!("Failed to release modifiers before copy: {}", e);
+    }
+
     if let Err(e) = input::send_copy_ctrl_c(&mut enigo) {
         info!("Failed to send Ctrl+C: {}", e);
         let _ = clipboard.write_text(&original_content);
