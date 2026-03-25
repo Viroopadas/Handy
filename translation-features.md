@@ -56,8 +56,8 @@ Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -
 
 1. Проверяет `self.post_process == true`.
 2. Проверяет, включен ли хотя бы один фильтр (`post_process_enabled` или `translation_enabled`).
-3. Если да — вызывает `try_get_selected_text()` (симулирует Ctrl+C, читает clipboard).
-4. Если текст получен — делегирует в `start_process_selected_text()` (async LLM → async перевод → paste). Оверлеи меняются последовательно: сначала `processing`, затем `translating`.
+3. Если да — вызывает `try_get_selected_text()` (симулирует Ctrl+C, ждёт ответ через polling clipboard до 500ms).
+4. Если текст получен — делегирует в `start_process_selected_text()` (async LLM → async перевод → сохранение в историю → paste). Оверлеи меняются последовательно: сначала `processing`, затем `translating`. Если результат не отличается от исходного текста — paste пропускается (при ошибке воспроизводится звуковой сигнал).
 5. Если текста нет (или оба фильтра выключены) — запускается запись голоса. Если результат после пайплайна пуст — текст не вставляется, оверлеи просто скрываются.
 
 ### Файлы
@@ -65,19 +65,26 @@ Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -
 | Файл | Что |
 |------|-----|
 | `input.rs` | `send_copy_ctrl_c()` — симуляция Ctrl+C через enigo |
-| `clipboard.rs` | `try_get_selected_text()` — получение выделенного текста через clipboard |
+| `clipboard.rs` | `try_get_selected_text()` — получение выделенного текста (polling clipboard каждые 50ms, до 500ms) |
 | `actions.rs` | `start_process_selected_text()` + ветвление в `TranscribeAction::start()` |
 | `overlay.rs` | `show_translating_overlay()`, `show_processing_overlay()` — UI стейты |
 | `RecordingOverlay.tsx` | Рендер стейта "translating" и "processing" |
 | `translation.json` | Ключ `overlay.translating` |
+| `google_translate.rs` | Google Translate API (POST, form-encoded) |
 
 ### Условия работы (для захвата текста)
 
 - Нажата комбинация с `post_process == true`.
 - Включен хотя бы один из фильтров: `post_process_enabled` или `translation_enabled`.
-- В буфере обмена оказался новый текст после симуляции `Ctrl+C`.
+- В буфере обмена оказался новый текст после симуляции `Ctrl+C` (определяется через polling, макс. 500ms).
 
 Если условия не выполнены — запускается микрофон и запись голоса.
+
+### Поведение после обработки
+
+- Если результат **отличается** от исходного текста — вставляется через paste.
+- Если результат **совпадает** с исходным (ошибка API / оба фильтра ничего не изменили) — paste пропускается, при ошибке воспроизводится звуковой сигнал.
+- Результат **всегда сохраняется в историю** (`HistoryManager::save_entry`) — с пустым `file_name` (нет WAV).
 
 ---
 
@@ -85,7 +92,8 @@ Audio -> Whisper -> [Chinese variant] -> [Post-process LLM] -> [Translate LLM] -
 
 - i18n для других языков (кроме EN) — ключи `settings.postProcessing.translation.*` и `overlay.translating`
 - Предупреждение при одновременном `translate_to_english` + `translation_enabled`
-- Отображение перевода в UI истории
+- Отображение перевода в UI истории (записи сохраняются в БД, но фронтенд пока не отображает `translated_text`)
+- Toast/notification при ошибках перевода (сейчас только звуковой сигнал)
 
 ---
 
